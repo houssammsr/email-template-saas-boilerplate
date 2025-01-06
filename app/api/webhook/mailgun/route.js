@@ -1,0 +1,46 @@
+import { NextResponse } from "next/server";
+import { sendEmail } from "@/libs/mailgun";
+import config from "@/config";
+import crypto from "crypto";
+
+// This route is used to receive emails from Mailgun and forward them to our customer support email.
+// See more: https://shipfa.st/docs/features/emails
+export async function POST(req) {
+  try {
+    const formData = await req.formData();
+
+    const signingKey = process.env.MAILGUN_SIGNING_KEY;
+
+    const timestamp = formData.get("timestamp").toString();
+    const token = formData.get("token").toString();
+    const signature = formData.get("signature").toString();
+
+    const value = timestamp + token;
+    const hash = crypto
+      .createHmac("sha256", signingKey)
+      .update(value)
+      .digest("hex");
+
+    if (hash !== signature) {
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+
+    const sender = formData.get("From");
+    const subject = formData.get("Subject");
+    const html = formData.get("body-html");
+
+    if (config.mailgun.forwardRepliesTo && html && subject && sender) {
+      await sendEmail({
+        to: config.mailgun.forwardRepliesTo,
+        subject: `${config?.appName} | ${subject}`,
+        html: `<div><p><b>- Subject:</b> ${subject}</p><p><b>- From:</b> ${sender}</p><p><b>- Content:</b></p><div>${html}</div></div>`,
+        replyTo: sender,
+      });
+    }
+
+    return NextResponse.json({});
+  } catch (e) {
+    console.error(e?.message);
+    return NextResponse.json({ error: e?.message }, { status: 500 });
+  }
+}
